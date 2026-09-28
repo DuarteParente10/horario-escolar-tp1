@@ -420,6 +420,26 @@ def _(DIAS, PERIODOS):
 
 
 @app.cell
+def _():
+    # [LLM] Tradução dos nomes de estado do CP-SAT — a biblioteca
+    # OR-Tools só os devolve em inglês (StatusName), mas o relatório
+    # deve estar em português.
+    _ESTADOS_PT = {
+        "OPTIMAL": "Ótimo",
+        "FEASIBLE": "Viável (não necessariamente ótimo)",
+        "INFEASIBLE": "Inviável",
+        "UNKNOWN": "Desconhecido (sem solução dentro do tempo limite)",
+        "MODEL_INVALID": "Modelo inválido",
+    }
+
+    def estado_pt(solver, status):
+        nome = solver.StatusName(status)
+        return _ESTADOS_PT.get(nome, nome)
+
+    return (estado_pt,)
+
+
+@app.cell
 def _(mo):
     mo.md(r"""### Resolver e extrair o horário""")
     return
@@ -476,6 +496,7 @@ def _(
     construir_modelo,
     cp_model,
     dados,
+    estado_pt,
     extrair_horario,
     mo,
     resolver,
@@ -488,11 +509,11 @@ def _(
         horario = extrair_horario(dados, y_vars, solver)
     else:
         horario = None
-        mo.md(f"**Estado do solver:** {solver.StatusName(status)} — sem solução.")
+        mo.md(f"**Estado do solver:** {estado_pt(solver, status)} — sem solução.")
 
     mo.vstack([
         mo.md(
-            f"**Estado do solver:** {solver.StatusName(status)}  \n"
+            f"**Estado do solver:** {estado_pt(solver, status)}  \n"
             f"**Nº total de buracos (O1):** {solver.ObjectiveValue() if horario is not None else 'N/A'}  \n"
             f"**Tempo de resolução:** {solver.WallTime():.2f} s"
         ),
@@ -797,6 +818,7 @@ def _(
 @app.cell
 def _(
     contar_mudancas,
+    estado_pt,
     horario_h0,
     horario_inc,
     horario_zero,
@@ -816,9 +838,58 @@ def _(
         f"**Professor(es) afetado(s) pela mudança:** {', '.join(profs_afetados)}\n\n"
         f"| Abordagem | Estado | Tempo (s) | Aulas alteradas vs. H0 |\n"
         f"|---|---|---|---|\n"
-        f"| Do zero | {solver_zero.StatusName(status_zero)} | {tempo_zero:.3f} | {_mudancas_zero} |\n"
-        f"| Incremental | {solver_inc.StatusName(status_inc)} | {tempo_inc:.3f} | {_mudancas_inc} |\n"
+        f"| Do zero | {estado_pt(solver_zero, status_zero)} | {tempo_zero:.3f} | {_mudancas_zero} |\n"
+        f"| Incremental | {estado_pt(solver_inc, status_inc)} | {tempo_inc:.3f} | {_mudancas_inc} |\n"
     )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(r"""
+    ## 5. Teste com dados adicionais (não fornecidos)
+
+    Esta secção corre sempre com `dados_extra/` explicitamente
+    (independente da escolha no dropdown da secção 1), para deixar
+    registado — mesmo num export estático — que o sistema funciona
+    sem alterações de código com uma turma e disciplinas extra
+    (incluindo duas disciplinas a partilhar o mesmo tipo de sala
+    especial).
+    """)
+    return
+
+
+@app.cell
+def _(
+    adicionar_objetivo_buracos,
+    carregar_dados,
+    construir_modelo,
+    estado_pt,
+    extrair_horario,
+    mo,
+    resolver,
+    validar_horario,
+):
+    dados_extra_fixo = carregar_dados("dados_extra")
+    _modelo_extra, _y_extra, _prof_occ_extra = construir_modelo(dados_extra_fixo)
+    adicionar_objetivo_buracos(_modelo_extra, dados_extra_fixo, _prof_occ_extra)
+    _solver_extra, _status_extra = resolver(_modelo_extra, limite_segundos=30)
+    horario_extra_fixo = extrair_horario(dados_extra_fixo, _y_extra, _solver_extra)
+    _problemas_extra = validar_horario(horario_extra_fixo, dados_extra_fixo)
+
+    mo.vstack([
+        mo.md(
+            f"**Turmas:** {', '.join(dados_extra_fixo.turmas)} "
+            f"({len(dados_extra_fixo.turmas)} turmas, "
+            f"{len(dados_extra_fixo.disciplinas)} disciplinas)  \n"
+            f"**Estado do solver:** {estado_pt(_solver_extra, _status_extra)}  \n"
+            f"**Nº total de buracos (O1):** {_solver_extra.ObjectiveValue()}  \n"
+            f"**Tempo de resolução:** {_solver_extra.WallTime():.2f} s  \n"
+            f"**Validação R1–R8:** "
+            + ("✅ sem violações" if not _problemas_extra else f"❌ {len(_problemas_extra)} violações: {_problemas_extra}")
+        ),
+        mo.ui.table(horario_extra_fixo, label="Horário gerado (dados_extra)"),
+    ])
     return
 
 
